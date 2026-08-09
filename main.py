@@ -4,7 +4,8 @@ Displays the live frame stream and forwards mouse/keyboard input back to
 the device via InputController.
 
 Usage:
-    python main.py                     # first device found
+    python main.py                     # first device found, or QR pairing
+                                        # screen if none is already connected
     python main.py --serial R58N...    # specific device (see `adb devices`)
     python main.py --max-size 0        # native resolution (slower)
 """
@@ -12,12 +13,14 @@ import sys
 import queue
 import argparse
 
-from PyQt6.QtCore import Qt, QTimer, QPoint
-from PyQt6.QtGui import QImage, QPixmap, QMouseEvent, QKeyEvent
+import qrcode
+from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QMouseEvent, QKeyEvent
 from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
 
 from streamer import ScreenStreamer, DeviceInfo
 from input_controller import InputController
+from pairing import PairingServer
 
 KEY_MAP = {
     Qt.Key.Key_Escape: "back",
@@ -26,6 +29,83 @@ KEY_MAP = {
     Qt.Key.Key_Enter: "enter",
     Qt.Key.Key_Tab: "tab",
 }
+
+
+def _qr_pixmap(data: str, box_size=8) -> QPixmap:
+    qr = qrcode.QRCode(border=4)
+    qr.add_data(data)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()  # includes quiet-zone border
+    n = len(matrix)
+
+    image = QImage(n * box_size, n * box_size, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.white)
+    painter = QPainter(image)
+    painter.setBrush(Qt.GlobalColor.black)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for y, row in enumerate(matrix):
+        for x, is_dark in enumerate(row):
+            if is_dark:
+                painter.drawRect(x * box_size, y * box_size, box_size, box_size)
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
+class PairingWindow(QMainWindow):
+    """
+    Shows a QR code the phone can scan (with its normal camera app) to
+    auto-connect over Wi-Fi. See pairing.py for how the handshake works and
+    what needs to already be enabled on the device.
+    """
+
+    paired = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Android Mirror - scan to connect")
+
+        self.server = PairingServer()
+        self.server.start()
+
+        self.qr_label = QLabel()
+        self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.qr_label.setPixmap(_qr_pixmap(self.server.url))
+
+        self.status_label = QLabel(
+            "Scan this code with your phone's camera app.\n"
+            "Phone and PC must be on the same Wi-Fi network, and this device\n"
+            "must already be reachable over wireless ADB (run `adb tcpip 5555`\n"
+            "once over USB, or pair Wireless debugging once in Developer options).\n\n"
+            "Waiting for scan..."
+        )
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addWidget(self.qr_label)
+        layout.addWidget(self.status_label)
+        self.setCentralWidget(container)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._poll)
+        self.timer.start(200)
+
+    def _poll(self):
+        try:
+            serial = self.server.result_queue.get_nowait()
+        except queue.Empty:
+            return
+        self.timer.stop()
+        self.status_label.setText(f"Connected to {serial}. Starting mirror...")
+        QTimer.singleShot(400, lambda: self._finish(serial))
+
+    def _finish(self, serial):
+        self.paired.emit(serial)
+        self.close()
+
+    def closeEvent(self, event):
+        self.server.stop()
+        super().closeEvent(event)
 
 
 class MirrorWindow(QMainWindow):
@@ -124,20 +204,27 @@ def main():
     parser.add_argument("--bitrate", default="8M")
     args = parser.parse_args()
 
+    app = QApplication(sys.argv)
+
     if args.serial is None:
         devices = DeviceInfo.list_devices()
-        if not devices:
-            print("No adb devices found. Connect a device with USB debugging enabled "
-                  "(or `adb connect <ip>` for wireless) and try again.")
-            sys.exit(1)
         if len(devices) > 1:
             print(f"Multiple devices found: {devices}. Pass --serial to pick one.")
             sys.exit(1)
-        args.serial = devices[0]
+        args.serial = devices[0] if devices else None
 
-    app = QApplication(sys.argv)
-    win = MirrorWindow(serial=args.serial, max_size=args.max_size, bitrate=args.bitrate)
-    win.show()
+    def launch_mirror(serial):
+        win = MirrorWindow(serial=serial, max_size=args.max_size, bitrate=args.bitrate)
+        win.show()
+        app.mirror_window = win  # keep a reference alive
+
+    if args.serial:
+        launch_mirror(args.serial)
+    else:
+        pairing = PairingWindow()
+        pairing.paired.connect(launch_mirror)
+        pairing.show()
+
     sys.exit(app.exec())
 
 

@@ -53,6 +53,25 @@ python main.py --max-size 0           # native resolution (higher quality, more 
 python main.py --bitrate 4M           # lower bitrate for slow connections
 ```
 
+## Wireless QR pairing
+
+If `python main.py` doesn't find a device already connected, it shows a QR
+code instead of erroring out. Scan it with your phone's normal camera app
+and mirroring starts automatically, no typing IPs or serials.
+
+**One-time setup per device** (Android still requires this — no QR trick
+gets around it): connect the phone via USB once and run
+
+```bash
+adb tcpip 5555
+```
+
+This puts adbd into TCP mode on a fixed port, so it stays reachable over
+Wi-Fi (same network as your PC) across future sessions until you unplug/
+reboot the phone, at which point just redo the one command above. Scanning
+the QR simply tells the app the phone's current IP and calls
+`adb connect <ip>:5555` for you.
+
 ## Controls
 
 - Click = tap, click-drag = swipe

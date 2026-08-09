@@ -1,2 +1,3 @@
 PyQt6>=6.6
 numpy>=1.24
+qrcode>=7.4
