@@ -123,6 +123,11 @@ class ScreenStreamer:
                 for p in (ffmpeg_proc, adb_proc):
                     if p.poll() is None:
                         p.terminate()
+                    try:
+                        p.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait()
             if not self._stop_event.is_set():
                 time.sleep(0.2)  # brief pause before restart
 

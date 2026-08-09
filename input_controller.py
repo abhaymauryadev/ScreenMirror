@@ -13,6 +13,7 @@ simplicity.
 """
 import subprocess
 import shlex
+import sys
 
 KEYEVENT_MAP = {
     "back": "KEYCODE_BACK",
@@ -34,7 +35,10 @@ class InputController:
 
     def _adb(self, *args):
         cmd = ["adb"] + (["-s", self.serial] if self.serial else []) + list(args)
-        subprocess.run(cmd, capture_output=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"adb command failed ({' '.join(cmd)}): {result.stderr.strip()}",
+                  file=sys.stderr)
 
     def tap(self, x, y):
         self._adb("shell", "input", "tap", str(int(x)), str(int(y)))

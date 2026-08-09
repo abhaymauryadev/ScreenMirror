@@ -75,6 +75,8 @@ class MirrorWindow(QMainWindow):
             return None
         label_w, label_h = self.label.width(), self.label.height()
         pix_w, pix_h = pix.width(), pix.height()
+        if pix_w == 0 or pix_h == 0:
+            return None
         off_x = (label_w - pix_w) / 2  # letterboxing offset
         off_y = (label_h - pix_h) / 2
         x = pos.x() - off_x
